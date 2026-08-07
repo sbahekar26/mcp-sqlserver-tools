@@ -19,6 +19,15 @@ public sealed class ServerOptions
 
     public int CommandTimeoutSeconds { get; init; } = 15;
 
+    /// <summary>File to append JSON Lines audit records to. Unset means stderr, not "off".</summary>
+    public string? AuditPath { get; init; }
+
+    /// <summary>
+    /// Default is fail-closed: if the audit sink throws, the tool call fails rather than
+    /// completing unrecorded. This is the explicit, named override for that default.
+    /// </summary>
+    public bool AuditFailOpen { get; init; }
+
     public static ServerOptions FromEnvironment()
     {
         var provider = Environment.GetEnvironmentVariable("MCP_DB_PROVIDER") ?? "SqlServer";
@@ -32,10 +41,15 @@ public sealed class ServerOptions
             ConnectionString = connectionString,
             MaxRows = ReadInt("MCP_MAX_ROWS", 200),
             MaxResponseBytes = ReadInt("MCP_MAX_RESPONSE_BYTES", 256 * 1024),
-            CommandTimeoutSeconds = ReadInt("MCP_COMMAND_TIMEOUT", 15)
+            CommandTimeoutSeconds = ReadInt("MCP_COMMAND_TIMEOUT", 15),
+            AuditPath = Environment.GetEnvironmentVariable("MCP_AUDIT_PATH"),
+            AuditFailOpen = ReadBool("MCP_AUDIT_FAIL_OPEN", false)
         };
     }
 
     private static int ReadInt(string name, int fallback) =>
         int.TryParse(Environment.GetEnvironmentVariable(name), out var value) ? value : fallback;
+
+    private static bool ReadBool(string name, bool fallback) =>
+        bool.TryParse(Environment.GetEnvironmentVariable(name), out var value) ? value : fallback;
 }

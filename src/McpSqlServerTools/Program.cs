@@ -1,4 +1,5 @@
 using McpSqlServerTools;
+using McpSqlServerTools.Audit;
 using McpSqlServerTools.Db;
 using McpSqlServerTools.Safety;
 using Microsoft.Extensions.DependencyInjection;
@@ -22,6 +23,12 @@ builder.Services.AddSingleton<IReadOnlyGuard>(_ => options.Provider switch
     DbProvider.SqlServer => new ScriptDomReadOnlyGuard(),
     _ => new ConservativeReadOnlyGuard()
 });
+
+// The audit file is a separate stream from ILogger's stderr output, even when both happen
+// to land on stderr (MCP_AUDIT_PATH unset) — one is a log, the other is a compliance record.
+builder.Services.AddSingleton<IAuditSink>(_ => string.IsNullOrWhiteSpace(options.AuditPath)
+    ? JsonlAuditSink.ForStandardError()
+    : JsonlAuditSink.ForPath(options.AuditPath));
 
 builder.Services
     .AddMcpServer()
