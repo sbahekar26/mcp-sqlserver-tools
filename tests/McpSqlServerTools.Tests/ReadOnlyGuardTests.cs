@@ -52,6 +52,10 @@ public class ScriptDomGuardTests
     [InlineData("EXEC sp_executesql N'DELETE FROM dbo.Orders'")]
     [InlineData("SELECT 1; DROP TABLE dbo.Orders")]
     [InlineData("TRUNCATE TABLE dbo.Orders")]
+    // A CTE is only ever a named subquery; the write lives in the statement that follows it, and
+    // that statement is an InsertStatement rather than a SelectStatement. The existing
+    // "exactly one SELECT" check rejects it without needing to see inside the CTE at all.
+    [InlineData("WITH cte AS (SELECT 1 AS a) INSERT INTO dbo.Target (a) SELECT a FROM cte")]
     public void Rejects_anything_that_can_write(string sql) =>
         Assert.False(_guard.Validate(sql).Allowed);
 
@@ -62,4 +66,15 @@ public class ScriptDomGuardTests
         Assert.False(result.Allowed);
         Assert.Contains("INTO", result.Reason);
     }
+
+    [Theory]
+    // FOR XML/JSON only reshapes the result set into text; it has no side effects, no INTO
+    // target and cannot invoke EXEC, so it belongs on the allow side like any other SELECT.
+    [InlineData("SELECT Id, Name FROM dbo.Customers FOR XML AUTO")]
+    // A table-valued function called from a FROM clause is a read: SQL Server does not allow a
+    // TVF body to perform DML against anything but its own local table variables, so calling one
+    // cannot smuggle a write in through the back door. It's just another table reference.
+    [InlineData("SELECT * FROM dbo.GetOrdersByYear(2024) AS t")]
+    public void Allows_read_only_constructs_with_no_write_path(string sql) =>
+        Assert.True(_guard.Validate(sql).Allowed);
 }

@@ -43,7 +43,13 @@ public sealed class SqlGateway(ServerOptions options)
         await connection.OpenAsync(cancellationToken);
 
         await using var command = connection.CreateCommand();
+        // CA2100 flags dynamic CommandText as potential SQL injection. That's the correct default,
+        // but this method IS the single gateway every caller (guarded model SQL and our own fixed
+        // catalogue queries) must go through; the guard, not string-literal-only text, is the
+        // control here. See IReadOnlyGuard / ScriptDomReadOnlyGuard for the actual enforcement.
+#pragma warning disable CA2100
         command.CommandText = sql;
+#pragma warning restore CA2100
         command.CommandTimeout = options.CommandTimeoutSeconds;
 
         if (parameters is not null)

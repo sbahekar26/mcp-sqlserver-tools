@@ -63,7 +63,8 @@ public sealed class ScriptDomReadOnlyGuard : IReadOnlyGuard
         public string? Violation { get; private set; }
 
         // SELECT ... INTO #t creates a table, so it is a write despite being a SelectStatement.
-        public override void Visit(QuerySpecification node)
+        // `Into` lives on SelectStatement itself (not QuerySpecification) in this ScriptDom version.
+        public override void Visit(SelectStatement node)
         {
             if (node.Into is not null)
                 Violation ??= "SELECT ... INTO is not permitted.";

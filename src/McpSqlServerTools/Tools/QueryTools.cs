@@ -21,8 +21,8 @@ public sealed class QueryTools(
         [Description("One SELECT statement. No semicolon-separated batches, no INTO, no EXEC.")]
         string sql,
         [Description("Maximum rows to return. Clamped to the server's configured ceiling.")]
-        int? maxRows,
-        CancellationToken cancellationToken)
+        int? maxRows = null,
+        CancellationToken cancellationToken = default)
     {
         var verdict = guard.Validate(sql);
 
@@ -55,8 +55,8 @@ public sealed class QueryTools(
                  "visible before writing a real query. Cheaper and safer than 'SELECT *'.")]
     public async Task<string> SampleRowsAsync(
         [Description("Table name, optionally schema-qualified.")] string table,
-        [Description("How many rows to sample. Defaults to 5.")] int rows,
-        CancellationToken cancellationToken)
+        [Description("How many rows to sample. Defaults to 5.")] int rows = 5,
+        CancellationToken cancellationToken = default)
     {
         var count = Math.Clamp(rows <= 0 ? 5 : rows, 1, 50);
 
