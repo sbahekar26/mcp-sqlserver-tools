@@ -1,0 +1,42 @@
+{
+  "inputs": [
+    {
+      "id": "db-connection",
+      "type": "promptString",
+      "description": "Read-only connection string (use a login with db_datareader only)",
+      "password": true
+    }
+  ],
+  "servers": {
+    "sqlserver-tools": {
+      "type": "stdio",
+      "command": "dotnet",
+      "args": [
+        "run",
+        "--project",
+        "${workspaceFolder}/src/McpSqlServerTools/McpSqlServerTools.csproj",
+        "--no-build"
+      ],
+      "env": {
+        "MCP_DB_PROVIDER": "SqlServer",
+        "MCP_DB_CONNECTION": "${input:db-connection}",
+        "MCP_MAX_ROWS": "200",
+        "MCP_COMMAND_TIMEOUT": "15"
+      }
+    },
+    "sqlserver-tools-demo": {
+      "type": "stdio",
+      "command": "dotnet",
+      "args": [
+        "run",
+        "--project",
+        "${workspaceFolder}/src/McpSqlServerTools/McpSqlServerTools.csproj",
+        "--no-build"
+      ],
+      "env": {
+        "MCP_DB_PROVIDER": "Sqlite",
+        "MCP_DB_CONNECTION": "Data Source=${workspaceFolder}/demo/dealership.db;Mode=ReadOnly"
+      }
+    }
+  }
+}

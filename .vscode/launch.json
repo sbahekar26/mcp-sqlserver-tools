@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug MCP server (demo SQLite)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/src/McpSqlServerTools/bin/Debug/net10.0/McpSqlServerTools.dll",
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole",
+      "stopAtEntry": false,
+      "env": {
+        "MCP_DB_PROVIDER": "Sqlite",
+        "MCP_DB_CONNECTION": "Data Source=${workspaceFolder}/demo/dealership.db;Mode=ReadOnly"
+      }
+    }
+  ]
+}

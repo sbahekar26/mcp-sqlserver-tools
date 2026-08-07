@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>McpSqlServerTools</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pin these after the first restore: `dotnet list package` then paste the versions in. -->
+    <PackageReference Include="ModelContextProtocol" Version="*" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="*" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="*" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="*" />
+    <PackageReference Include="Microsoft.SqlServer.TransactSql.ScriptDom" Version="*" />
+  </ItemGroup>
+
+</Project>
