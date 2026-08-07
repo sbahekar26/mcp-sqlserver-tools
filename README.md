@@ -48,6 +48,8 @@ All configuration is environment variables, so no connection string ever reaches
 | `MCP_MAX_ROWS` | `200` | Hard ceiling; a tool call asking for more is clamped |
 | `MCP_MAX_RESPONSE_BYTES` | `262144` | Protects the client's context window |
 | `MCP_COMMAND_TIMEOUT` | `15` | Seconds |
+| `MCP_AUDIT_PATH` | *(unset)* | JSON Lines audit file. Unset means the audit trail goes to stderr, not that it is off |
+| `MCP_AUDIT_FAIL_OPEN` | `false` | If the audit sink throws, the default is to fail the tool call. Set `true` to log a warning and let the call through instead |
 
 ## Design notes
 
@@ -69,6 +71,42 @@ why, so the model can narrow the query rather than silently reasoning over a par
 equivalent parser available, so it gets a conservative tokeniser that strips comments and string
 literals *before* checking keywords — otherwise `SELECT 'do not delete this row'` would be rejected
 and `SELECT 1; /* */ DROP TABLE x` might not be.
+
+## Audit log
+
+Every call to `list_tables`, `describe_table`, `sample_rows` or `query` produces exactly one
+JSON Lines record — one JSON object per line, append-only — whether it was allowed, rejected by
+the guard, or errored. Rejections are the point: this is the log that answers "who asked what,
+and can you prove it," and a rejected attempt is at least as interesting as a successful one.
+
+```json
+{"timestamp":"2026-08-07T14:02:37.902Z","sessionId":"7e2f9a1c4b6d4e2f8a1c4b6d4e2f8a1c","tool":"query","statement":"DELETE FROM ServiceOrders WHERE Status = 'closed'","outcome":"rejected","rejectionReason":"Only SELECT is permitted; statement begins with 'delete'.","truncated":false,"elapsedMs":1,"provider":"Sqlite"}
+```
+
+More examples, including an `allowed` and an `error` record, are in
+[`demo/audit-sample.jsonl`](demo/audit-sample.jsonl).
+
+**The record never carries result data.** `AuditRecord` (`src/McpSqlServerTools/Audit`) has no
+field that can hold a row or a field value — `rowCount` is the only number that survives from a
+query result, everything else is metadata about the request. An audit log that contains the data
+it is auditing is a second, unaccounted-for copy of the sensitive thing.
+
+**Fails closed by default.** If the sink can't write — disk full, bad path, permissions — the
+tool call fails with an explanatory error rather than completing unrecorded. An audit trail with
+silent gaps is worse than no audit trail, because it looks complete. `MCP_AUDIT_FAIL_OPEN=true`
+is the explicit, named override: the call goes through and a warning is logged instead.
+
+**Audited in a decorator around the tools, not in `SqlGateway.ExecuteAsync`.** A rejected
+statement never reaches the gateway — the guard stops it first — and `list_tables` /
+`describe_table` never go through the guard at all, so a gateway-level hook would miss exactly
+the outcomes that matter most. `Audit/ToolAudit.RunAsync` is the single place every tool method
+routes through instead, so a new tool can't forget to be audited without also forgetting how to
+return a result.
+
+**The audit file is separate from `ILogger`,** even when both happen to point at stderr (the
+default, `MCP_AUDIT_PATH` unset). One is human-readable operational logging; the other is an
+append-only compliance record with a fixed schema. Conflating them would mean a log-format change
+silently breaking whatever ingests the audit trail.
 
 ## Tests
 
