@@ -25,10 +25,16 @@ public sealed class QueryTools(
         string sql,
         [Description("Maximum rows to return. Clamped to the server's configured ceiling.")]
         int? maxRows = null,
-        CancellationToken cancellationToken = default) =>
-        ToolAudit.RunAsync(auditSink, options, logger, "query", sql, async () =>
+        CancellationToken cancellationToken = default)
+    {
+        // Validated up front, not inside the audited action: a predicate-redaction rejection
+        // carries a sanitized copy of the statement with the offending clause blanked out, and
+        // that has to be what reaches the audit log, not the raw sql with the literal still in it.
+        var verdict = guard.Validate(sql);
+        var auditedStatement = verdict.SanitizedStatement ?? sql;
+
+        return ToolAudit.RunAsync(auditSink, options, logger, "query", auditedStatement, async () =>
         {
-            var verdict = guard.Validate(sql);
             if (!verdict.Allowed)
             {
                 // Logged at warning so a rejected attempt is visible in the trace, not silent.
@@ -44,6 +50,7 @@ public sealed class QueryTools(
             return AuditOutcome.Allowed(
                 result.Rows.Count, result.RowsTruncated || result.BytesTruncated, SqlGateway.ToJson(result));
         });
+    }
 
     [McpServerTool(Name = "sample_rows")]
     [Description("Returns a small sample of rows from one table so the shape of the data is " +

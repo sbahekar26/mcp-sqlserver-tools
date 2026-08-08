@@ -28,6 +28,9 @@ public sealed class ServerOptions
     /// </summary>
     public bool AuditFailOpen { get; init; }
 
+    /// <summary>Path to the JSON redaction config. Unset means redaction is off.</summary>
+    public string? RedactionConfigPath { get; init; }
+
     public static ServerOptions FromEnvironment()
     {
         var provider = Environment.GetEnvironmentVariable("MCP_DB_PROVIDER") ?? "SqlServer";
@@ -43,7 +46,8 @@ public sealed class ServerOptions
             MaxResponseBytes = ReadInt("MCP_MAX_RESPONSE_BYTES", 256 * 1024),
             CommandTimeoutSeconds = ReadInt("MCP_COMMAND_TIMEOUT", 15),
             AuditPath = Environment.GetEnvironmentVariable("MCP_AUDIT_PATH"),
-            AuditFailOpen = ReadBool("MCP_AUDIT_FAIL_OPEN", false)
+            AuditFailOpen = ReadBool("MCP_AUDIT_FAIL_OPEN", false),
+            RedactionConfigPath = Environment.GetEnvironmentVariable("MCP_REDACTION_CONFIG")
         };
     }
 

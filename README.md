@@ -50,6 +50,7 @@ All configuration is environment variables, so no connection string ever reaches
 | `MCP_COMMAND_TIMEOUT` | `15` | Seconds |
 | `MCP_AUDIT_PATH` | *(unset)* | JSON Lines audit file. Unset means the audit trail goes to stderr, not that it is off |
 | `MCP_AUDIT_FAIL_OPEN` | `false` | If the audit sink throws, the default is to fail the tool call. Set `true` to log a warning and let the call through instead |
+| `MCP_REDACTION_CONFIG` | *(unset)* | Path to a JSON column-redaction config. Unset means redaction is off, logged as a warning at startup |
 
 ## Design notes
 
@@ -71,6 +72,11 @@ why, so the model can narrow the query rather than silently reasoning over a par
 equivalent parser available, so it gets a conservative tokeniser that strips comments and string
 literals *before* checking keywords — otherwise `SELECT 'do not delete this row'` would be rejected
 and `SELECT 1; /* */ DROP TABLE x` might not be.
+
+**Two redactors, one interface — same split as the guards, for the same reason.**
+`IColumnRedactor` has an `AstColumnRedactor` (SQL Server) and a `NameOnlyColumnRedactor` (SQLite).
+The AST-based one is strictly more capable — it resolves aliases and `SELECT *` correctly — but
+requires the same parser SQLite doesn't have. See [Redaction](#redaction).
 
 ## Audit log
 
@@ -108,6 +114,71 @@ default, `MCP_AUDIT_PATH` unset). One is human-readable operational logging; the
 append-only compliance record with a fixed schema. Conflating them would mean a log-format change
 silently breaking whatever ingests the audit trail.
 
+## Redaction
+
+Masking a column's *output* is not enough on its own. If `Email` is masked but the model can
+still run `SELECT COUNT(*) FROM Customers WHERE Email = 'someone@example.com'`, it can confirm
+whether an address exists in the table, one guess at a time — the predicate leaks what the output
+mask was supposed to hide. So there are two enforcement points, not one:
+
+1. **Output masking**, in `SqlGateway.ExecuteAsync`. Selecting a redacted column is allowed; the
+   value comes back masked.
+2. **Predicate rejection**, in the guard. Using a redacted column in `WHERE`, `JOIN ON`,
+   `GROUP BY`, `HAVING` or `ORDER BY` is not allowed — the whole query is rejected, naming the
+   column, before it runs.
+
+Configure it with `MCP_REDACTION_CONFIG`, e.g. [`demo/redaction.json`](demo/redaction.json):
+
+```json
+{
+  "redactions": [
+    { "table": "Customers", "column": "Email",  "strategy": "mask" },
+    { "table": "Customers", "column": "Phone",  "strategy": "hash" },
+    { "table": "Vehicles",  "column": "Vin",    "strategy": "partial", "keepLast": 4 }
+  ]
+}
+```
+
+Table and column names match case-insensitively. Three strategies:
+
+| Strategy | Output |
+| --- | --- |
+| `mask` | Fixed placeholder (`[REDACTED]`) |
+| `hash` | Stable, unsalted SHA-256 prefix — equal inputs always hash equal, so a join or a `GROUP BY` on the *hashed* column still works without the model ever seeing the real value |
+| `partial` | The last `keepLast` characters, everything before them replaced with `*` |
+
+```
+$ query: SELECT Name, ContactEmail, ContactPhone FROM Dealerships WHERE Id = 1
+{"columns":["Name","ContactEmail","ContactPhone"],"rowCount":1,
+ "rows":[["Lakeshore Motors","[REDACTED]","139c5834a7edf12d"]], ...}
+```
+
+**Output masking is resolved from the AST, not the result column name.** `reader.GetName(i)`
+reports whatever the query aliased a column to, so a naive "mask any output column literally
+named Email" check misses `SELECT Email AS e`. `AstColumnRedactor` parses the statement with
+ScriptDom, walks the FROM clause to map aliases back to real table names, and traces every plain
+SELECT-list item (including a qualified one like `c.Email`) back to its `(table, column)` before
+deciding whether to mask it. `SELECT *` has no named columns in the AST at all — that case falls
+back to matching the reader's column name against whichever tables are in scope for the star.
+
+**Provider asymmetry — SQL Server gets both protections, SQLite gets one.** Predicate rejection
+needs the same AST that output masking uses; `ScriptDomReadOnlyGuard` (SQL Server) has it,
+`ConservativeReadOnlyGuard` (SQLite, see [Design notes](#design-notes)) is a keyword tokenizer
+with no table/column resolution at all. So on SQLite: output masking still runs, but as a
+name-only match with no AST to trace an alias through (`NameOnlyColumnRedactor`), and
+`WHERE Email = 'x'` is **not** rejected — it runs and comes back masked, which does not stop the
+equality check from confirming the guess. The server logs a warning about this at startup
+whenever redaction is configured on the SQLite provider. See Known limits.
+
+**The audit log never records the value being redacted, or the guess against it.**
+[`AuditRecord`](src/McpSqlServerTools/Audit/AuditRecord.cs) has no field that can hold a row
+value, so masked output was already safe. A rejected predicate is the harder case: the literal
+being compared *is* the sensitive guess ("does `Email = 'someone@example.com'` match anything?"),
+so logging the raw statement would defeat the rejection. The guard returns a sanitized copy of
+the statement — the whole offending clause blanked out, not just the literal, since carving out
+exactly the literal for every predicate shape (`IN`, `LIKE`, `BETWEEN`, `IS NULL`, ...) is a lot
+of casework for a query that never runs — and `QueryTools` logs that instead of the original.
+
 ## Tests
 
 ```bash
@@ -126,3 +197,29 @@ batches with the write in second position.
   guard, but a bound parameter would be stronger if the provider allowed it.
 - Row estimates on SQL Server come from `sys.partitions` and are approximate by design.
 - No result caching. Repeated identical queries hit the database each time.
+- **Redaction predicate rejection is SQL-Server-only.** SQLite has no AST parser in this project
+  (see [Design notes](#design-notes)), so `WHERE`/`JOIN ON`/`GROUP BY`/`HAVING`/`ORDER BY` on a
+  redacted column is not rejected there — only output masking applies. A startup warning is
+  logged when this gap is actually relevant (redaction configured, provider is SQLite).
+- **Redaction output masking on SQLite is name-only, with no alias resolution.**
+  `SELECT Email AS e FROM Customers` is masked correctly on SQL Server (traced via the AST) but
+  **not** on SQLite — the reader reports the column as `e`, and there is no parser on that
+  provider left to trace `e` back to `Email`.
+- **An unqualified column in a multi-table, no-alias-prefix query is not masked or checked.**
+  `AstColumnRedactor` and the predicate guard resolve `c.Email` via the FROM-clause alias map, but
+  a bare `Email` with more than one table in scope and no qualifier has no way to know which table
+  it came from without a real binder/catalog. It is left alone rather than guessed at. Always
+  qualifying joined columns avoids this; the demo does.
+- **Only a bare column reference is traced for masking or predicate rejection.**
+  `SELECT UPPER(Email)` or `WHERE Email LIKE '%x%'`'s wrapping expression is not specially
+  understood — the column reference inside is still found by the predicate check (so the `LIKE`
+  case is still rejected), but a *derived* SELECT-list value like `UPPER(Email)` is not masked,
+  because there is no single source column to trace a function call back to.
+- **The redaction hash strategy is unsalted.** Equal inputs must hash equal for joins/`GROUP BY`
+  on the hash to work, but for a low-cardinality column (a phone number, a small zip-code range)
+  that same property makes it brute-forceable offline — hash every candidate and compare. A keyed
+  HMAC would close that at the cost of a secret to manage and hashes that no longer match anything
+  computed outside this process; not implemented here.
+- The AST-based redactor re-parses the SQL text independently of the read-only guard, so a
+  `query`/`sample_rows` call parses the same statement twice. Fine at this scale; a shared
+  per-request parse would remove the duplication if it ever mattered.

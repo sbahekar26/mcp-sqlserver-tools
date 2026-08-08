@@ -1,5 +1,6 @@
 using System.Data.Common;
 using System.Text.Json;
+using McpSqlServerTools.Redaction;
 using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 
@@ -16,7 +17,7 @@ public sealed record ResultSet(
 /// Single point of database access. Every path through here enforces the row cap, the
 /// payload-size cap and the command timeout, so no tool can bypass them by accident.
 /// </summary>
-public sealed class SqlGateway(ServerOptions options)
+public sealed class SqlGateway(ServerOptions options, IColumnRedactor redactor)
 {
     private readonly Dialect _dialect = Dialect.For(options.Provider);
 
@@ -34,7 +35,8 @@ public sealed class SqlGateway(ServerOptions options)
         string sql,
         IReadOnlyDictionary<string, object?>? parameters,
         int? rowLimit,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool applyRedaction = true)
     {
         var effectiveLimit = Math.Clamp(rowLimit ?? options.MaxRows, 1, options.MaxRows);
         var startedAt = DateTimeOffset.UtcNow;
@@ -69,6 +71,12 @@ public sealed class SqlGateway(ServerOptions options)
             .Select(reader.GetName)
             .ToArray();
 
+        // Resolved once per query, not per row: the AST (or the SQLite name-only fallback)
+        // tells us which output columns are redacted before any row is read. Catalogue queries
+        // (list_tables, describe_table) pass applyRedaction: false — they return schema
+        // metadata we wrote ourselves, not model-facing table data, so there is nothing to mask.
+        var columnRules = applyRedaction ? columns.Select(redactor.Plan(sql)).ToArray() : null;
+
         var rows = new List<IReadOnlyList<object?>>();
         var approximateBytes = 0;
         var rowsTruncated = false;
@@ -85,7 +93,8 @@ public sealed class SqlGateway(ServerOptions options)
             var row = new object?[reader.FieldCount];
             for (var i = 0; i < reader.FieldCount; i++)
             {
-                row[i] = reader.IsDBNull(i) ? null : Normalise(reader.GetValue(i));
+                var value = reader.IsDBNull(i) ? null : Normalise(reader.GetValue(i));
+                row[i] = columnRules?[i] is { } rule ? rule.Apply(value) : value;
             }
 
             approximateBytes += EstimateBytes(row);

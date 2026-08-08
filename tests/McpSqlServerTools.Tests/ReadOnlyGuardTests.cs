@@ -1,3 +1,4 @@
+using McpSqlServerTools.Redaction;
 using McpSqlServerTools.Safety;
 using Xunit;
 
@@ -37,7 +38,7 @@ public class ConservativeGuardTests
 
 public class ScriptDomGuardTests
 {
-    private readonly ScriptDomReadOnlyGuard _guard = new();
+    private readonly ScriptDomReadOnlyGuard _guard = new(RedactionConfig.Empty);
 
     [Theory]
     [InlineData("SELECT TOP 10 * FROM dbo.Orders")]

@@ -35,7 +35,8 @@
       ],
       "env": {
         "MCP_DB_PROVIDER": "Sqlite",
-        "MCP_DB_CONNECTION": "Data Source=${workspaceFolder}/demo/dealership.db;Mode=ReadOnly"
+        "MCP_DB_CONNECTION": "Data Source=${workspaceFolder}/demo/dealership.db;Mode=ReadOnly",
+        "MCP_REDACTION_CONFIG": "${workspaceFolder}/demo/redaction.json"
       }
     }
   }
