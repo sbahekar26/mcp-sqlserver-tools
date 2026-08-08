@@ -192,6 +192,13 @@ batches with the write in second position.
 
 ## Known limits
 
+- **The guard governs SQL arriving through this server. It does not constrain the agent calling
+  it.** An assistant that also holds a shell, filesystem access, or a second database client can
+  reach the same data without ever invoking these tools — which is what happened the first time
+  this was demoed: the agent ran `sqlite3` against the demo database directly instead of calling
+  `query`. In a real deployment the enforcing boundary is the database credential and the network
+  path, not this guard; the guard reduces what a compromised or confused caller can do through
+  this channel, and nothing more.
 - `sample_rows` interpolates a quoted table name because a table name cannot be a bound parameter.
   The identifier is delimiter-escaped and the resulting statement is still passed through the
   guard, but a bound parameter would be stronger if the provider allowed it.
