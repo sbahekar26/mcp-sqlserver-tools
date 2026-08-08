@@ -6,10 +6,12 @@ DROP TABLE IF EXISTS Vehicles;
 DROP TABLE IF EXISTS Dealerships;
 
 CREATE TABLE Dealerships (
-    Id       INTEGER PRIMARY KEY,
-    Name     TEXT    NOT NULL,
-    Province TEXT    NOT NULL,
-    Oem      TEXT    NOT NULL
+    Id           INTEGER PRIMARY KEY,
+    Name         TEXT    NOT NULL,
+    Province     TEXT    NOT NULL,
+    Oem          TEXT    NOT NULL,
+    ContactEmail TEXT    NOT NULL,
+    ContactPhone TEXT    NOT NULL
 );
 
 CREATE TABLE Vehicles (
@@ -29,9 +31,9 @@ CREATE TABLE ServiceOrders (
 );
 
 INSERT INTO Dealerships VALUES
- (1, 'Lakeshore Motors',   'ON', 'Nissan'),
- (2, 'Bow Valley Auto',    'AB', 'Infiniti'),
- (3, 'Rive-Sud Automobile','QC', 'Mitsubishi');
+ (1, 'Lakeshore Motors',    'ON', 'Nissan',     'service@lakeshoremotors.example',  '416-555-0101'),
+ (2, 'Bow Valley Auto',     'AB', 'Infiniti',   'service@bowvalleyauto.example',    '403-555-0172'),
+ (3, 'Rive-Sud Automobile', 'QC', 'Mitsubishi', 'service@rivesudautomobile.example','450-555-0143');
 
 INSERT INTO Vehicles VALUES
  ('1N4AL3AP1JC100001', 1, 'Altima',  2024),

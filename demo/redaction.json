@@ -1,0 +1,7 @@
+{
+  "redactions": [
+    { "table": "Dealerships", "column": "ContactEmail", "strategy": "mask" },
+    { "table": "Dealerships", "column": "ContactPhone", "strategy": "hash" },
+    { "table": "Vehicles",    "column": "Vin",           "strategy": "partial", "keepLast": 4 }
+  ]
+}

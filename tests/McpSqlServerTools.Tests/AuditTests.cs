@@ -1,6 +1,7 @@
 using System.Text.Json;
 using McpSqlServerTools.Audit;
 using McpSqlServerTools.Db;
+using McpSqlServerTools.Redaction;
 using McpSqlServerTools.Safety;
 using McpSqlServerTools.Tools;
 using Microsoft.Data.Sqlite;
@@ -26,7 +27,7 @@ public sealed class SqliteAuditFixture : IDisposable
     {
         _dbPath = Path.Combine(Path.GetTempPath(), $"audit-test-{Guid.NewGuid():N}.db");
         Options = new ServerOptions { Provider = DbProvider.Sqlite, ConnectionString = $"Data Source={_dbPath}" };
-        Gateway = new SqlGateway(Options);
+        Gateway = new SqlGateway(Options, new NameOnlyColumnRedactor(RedactionConfig.Empty));
 
         using var connection = new SqliteConnection(Options.ConnectionString);
         connection.Open();
@@ -81,12 +82,14 @@ public class AuditTests
     private static readonly ServerOptions InertOptions =
         new() { Provider = DbProvider.Sqlite, ConnectionString = "Data Source=:memory:" };
 
+    private static readonly IColumnRedactor InertRedactor = new NameOnlyColumnRedactor(RedactionConfig.Empty);
+
     [Fact]
     public async Task Rejected_query_is_audited_with_reason()
     {
         var sink = new CapturingAuditSink();
         var tools = new QueryTools(
-            new SqlGateway(InertOptions), new ConservativeReadOnlyGuard(), sink, InertOptions,
+            new SqlGateway(InertOptions, InertRedactor), new ConservativeReadOnlyGuard(), sink, InertOptions,
             NullLogger<QueryTools>.Instance);
 
         await tools.QueryAsync("DELETE FROM Notes");
@@ -147,7 +150,7 @@ public class AuditTests
             Provider = DbProvider.Sqlite, ConnectionString = "Data Source=:memory:", AuditFailOpen = false
         };
         var tools = new QueryTools(
-            new SqlGateway(options), new ConservativeReadOnlyGuard(), new ThrowingAuditSink(), options,
+            new SqlGateway(options, InertRedactor), new ConservativeReadOnlyGuard(), new ThrowingAuditSink(), options,
             NullLogger<QueryTools>.Instance);
 
         var response = await tools.QueryAsync("DELETE FROM Notes");
@@ -167,7 +170,8 @@ public class AuditTests
         };
         var logger = new RecordingLogger<QueryTools>();
         var tools = new QueryTools(
-            new SqlGateway(options), new ConservativeReadOnlyGuard(), new ThrowingAuditSink(), options, logger);
+            new SqlGateway(options, InertRedactor), new ConservativeReadOnlyGuard(), new ThrowingAuditSink(), options,
+            logger);
 
         var response = await tools.QueryAsync("SELECT Id FROM Notes");
 

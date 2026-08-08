@@ -20,8 +20,10 @@ public sealed class SchemaTools(
     public Task<string> ListTablesAsync(CancellationToken cancellationToken) =>
         ToolAudit.RunAsync(auditSink, options, logger, "list_tables", statement: null, async () =>
         {
+            // Schema metadata, not model-facing table data: never redacted.
             var result = await gateway.ExecuteAsync(
-                gateway.Dialect.ListTables, parameters: null, rowLimit: null, cancellationToken);
+                gateway.Dialect.ListTables, parameters: null, rowLimit: null, cancellationToken,
+                applyRedaction: false);
 
             return AuditOutcome.Allowed(
                 result.Rows.Count, result.RowsTruncated || result.BytesTruncated, SqlGateway.ToJson(result));
@@ -39,7 +41,8 @@ public sealed class SchemaTools(
             var parameters = new Dictionary<string, object?> { ["@table"] = table };
 
             var columns = await gateway.ExecuteAsync(
-                gateway.Dialect.DescribeColumns, parameters, rowLimit: null, cancellationToken);
+                gateway.Dialect.DescribeColumns, parameters, rowLimit: null, cancellationToken,
+                applyRedaction: false);
 
             if (columns.Rows.Count == 0)
             {
@@ -54,7 +57,8 @@ public sealed class SchemaTools(
             }
 
             var keys = await gateway.ExecuteAsync(
-                gateway.Dialect.DescribeKeys, parameters, rowLimit: null, cancellationToken);
+                gateway.Dialect.DescribeKeys, parameters, rowLimit: null, cancellationToken,
+                applyRedaction: false);
 
             var payload = JsonSerializer.Serialize(new
             {

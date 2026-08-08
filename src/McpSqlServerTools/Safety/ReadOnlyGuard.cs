@@ -1,12 +1,19 @@
 using System.Text;
+using McpSqlServerTools.Redaction;
 using Microsoft.SqlServer.TransactSql.ScriptDom;
 
 namespace McpSqlServerTools.Safety;
 
-public sealed record GuardResult(bool Allowed, string? Reason)
+public sealed record GuardResult(bool Allowed, string? Reason, string? SanitizedStatement = null)
 {
     public static readonly GuardResult Ok = new(true, null);
     public static GuardResult Deny(string reason) => new(false, reason);
+
+    // SanitizedStatement carries a copy of the SQL with the offending clause blanked out, for
+    // callers (the audit log) that must not record the literal being compared against a
+    // redacted column — that literal is itself the sensitive guess.
+    public static GuardResult DenyRedactedPredicate(string reason, string sanitizedStatement) =>
+        new(false, reason, sanitizedStatement);
 }
 
 public interface IReadOnlyGuard
@@ -20,7 +27,7 @@ public interface IReadOnlyGuard
 /// anything the parser does not recognise as a plain SELECT is rejected, so new or
 /// obscure statement types fail closed rather than slipping through a keyword filter.
 /// </summary>
-public sealed class ScriptDomReadOnlyGuard : IReadOnlyGuard
+public sealed class ScriptDomReadOnlyGuard(RedactionConfig redaction) : IReadOnlyGuard
 {
     public GuardResult Validate(string sql)
     {
@@ -53,9 +60,91 @@ public sealed class ScriptDomReadOnlyGuard : IReadOnlyGuard
         var visitor = new MutationVisitor();
         select.Accept(visitor);
 
-        return visitor.Violation is { } violation
-            ? GuardResult.Deny(violation)
-            : GuardResult.Ok;
+        if (visitor.Violation is { } violation)
+            return GuardResult.Deny(violation);
+
+        if (!redaction.IsEmpty && select.QueryExpression is QuerySpecification spec)
+        {
+            var predicateViolation = CheckRedactedPredicates(sql, spec);
+            if (predicateViolation is not null) return predicateViolation;
+        }
+
+        return GuardResult.Ok;
+    }
+
+    /// <summary>
+    /// Rejects a query that uses a redacted column anywhere it would let the model infer the
+    /// value instead of just seeing it: WHERE, JOIN ON, GROUP BY, HAVING, ORDER BY. Selecting
+    /// the column outright is still allowed — SqlGateway masks it on the way out.
+    /// </summary>
+    private GuardResult? CheckRedactedPredicates(string sql, QuerySpecification spec)
+    {
+        var aliasToTable = TableAliasResolver.Resolve(spec.FromClause);
+
+        GuardResult? CheckClause(TSqlFragment? clause)
+        {
+            if (clause is null) return null;
+
+            var collector = new ColumnReferenceCollector();
+            clause.Accept(collector);
+
+            foreach (var colRef in collector.Columns)
+            {
+                var identifiers = colRef.MultiPartIdentifier?.Identifiers;
+                if (identifiers is null || identifiers.Count == 0) continue; // e.g. COUNT(*)
+
+                var column = identifiers[^1].Value;
+                var qualifier = identifiers.Count > 1 ? identifiers[^2].Value : null;
+                var table = TableAliasResolver.ResolveTable(qualifier, aliasToTable);
+
+                if (table is null || redaction.TryGetRule(table, column) is null)
+                    continue;
+
+                // Blank out the whole clause, not just the literal being compared: pinpointing
+                // exactly the literal AST node for every predicate shape (comparison, IN-list,
+                // LIKE, BETWEEN, IS NULL...) is a lot of casework for a query that is being
+                // rejected anyway, and the query never runs, so hiding a few extra
+                // non-sensitive characters alongside it costs nothing.
+                var sanitized = sql[..clause.StartOffset] + "<redacted>" +
+                                sql[(clause.StartOffset + clause.FragmentLength)..];
+
+                return GuardResult.DenyRedactedPredicate(
+                    $"Column '{column}' is redacted and cannot be used in a WHERE, JOIN ON, GROUP BY, " +
+                    "HAVING or ORDER BY clause — it would let a filter or a match confirm the value one " +
+                    "guess at a time. Select it directly instead; it will come back masked.",
+                    sanitized);
+            }
+
+            return null;
+        }
+
+        var result = CheckClause(spec.WhereClause)
+            ?? CheckClause(spec.GroupByClause)
+            ?? CheckClause(spec.HavingClause)
+            ?? CheckClause(spec.OrderByClause);
+        if (result is not null) return result;
+
+        var joinCollector = new QualifiedJoinCollector();
+        spec.FromClause?.Accept(joinCollector);
+        foreach (var join in joinCollector.Joins)
+        {
+            result = CheckClause(join.SearchCondition);
+            if (result is not null) return result;
+        }
+
+        return null;
+    }
+
+    private sealed class ColumnReferenceCollector : TSqlFragmentVisitor
+    {
+        public List<ColumnReferenceExpression> Columns { get; } = [];
+        public override void Visit(ColumnReferenceExpression node) => Columns.Add(node);
+    }
+
+    private sealed class QualifiedJoinCollector : TSqlFragmentVisitor
+    {
+        public List<QualifiedJoin> Joins { get; } = [];
+        public override void Visit(QualifiedJoin node) => Joins.Add(node);
     }
 
     private sealed class MutationVisitor : TSqlFragmentVisitor
